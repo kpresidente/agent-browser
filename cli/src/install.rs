@@ -128,6 +128,15 @@ pub fn run_install(with_deps: bool) {
     }
 
     println!("\x1b[36mInstalling Chromium browser...\x1b[0m");
+    
+    // On Windows, we need to use cmd.exe to run npx because npx is actually npx.cmd
+    // and Command::new() doesn't resolve .cmd files the way the shell does
+    #[cfg(windows)]
+    let status = Command::new("cmd")
+        .args(["/c", "npx", "playwright", "install", "chromium"])
+        .status();
+    
+    #[cfg(not(windows))]
     let status = Command::new("npx")
         .args(["playwright", "install", "chromium"])
         .status();

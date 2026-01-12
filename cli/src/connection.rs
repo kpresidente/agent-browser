@@ -206,8 +206,12 @@ pub fn ensure_daemon(session: &str, headed: bool) -> Result<(), String> {
     {
         use std::os::windows::process::CommandExt;
         
-        let mut cmd = Command::new("node");
-        cmd.arg(daemon_path)
+        // On Windows, use cmd.exe to run node to ensure proper PATH resolution
+        // This handles cases where node.exe isn't directly in PATH but node.cmd is
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/c")
+            .arg("node")
+            .arg(daemon_path)
             .env("AGENT_BROWSER_DAEMON", "1")
             .env("AGENT_BROWSER_SESSION", session);
 
