@@ -155,3 +155,34 @@ jobs:
             exit 1
           }
         shell: pwsh
+
+  serverless-chromium:
+    name: Serverless Chromium (@sparticuz/chromium)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install @sparticuz/chromium
+        run: pnpm add -D @sparticuz/chromium
+
+      - name: Build TypeScript
+        run: pnpm build
+
+      - name: Run serverless integration test
+        run: pnpm exec vitest run test/serverless.test.ts

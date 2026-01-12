@@ -13,6 +13,7 @@ export interface LaunchCommand extends BaseCommand {
   viewport?: { width: number; height: number };
   browser?: 'chromium' | 'firefox' | 'webkit';
   headers?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface NavigateCommand extends BaseCommand {

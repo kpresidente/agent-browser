@@ -591,6 +591,7 @@ export class BrowserManager {
     // Launch browser
     this.browser = await launcher.launch({
       headless: options.headless ?? true,
+      executablePath: options.executablePath,
     });
 
     // Create context with viewport and optional headers

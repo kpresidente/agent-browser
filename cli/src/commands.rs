@@ -900,6 +900,7 @@ mod tests {
             headed: false,
             debug: false,
             headers: None,
+            executable_path: None,
         }
     }
 

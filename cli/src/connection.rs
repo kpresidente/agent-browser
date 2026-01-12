@@ -153,9 +153,15 @@ fn daemon_ready(session: &str) -> bool {
     }
 }
 
-pub fn ensure_daemon(session: &str, headed: bool) -> Result<(), String> {
+/// Result of ensure_daemon indicating whether a new daemon was started
+pub struct DaemonResult {
+    /// True if we connected to an existing daemon, false if we started a new one
+    pub already_running: bool,
+}
+
+pub fn ensure_daemon(session: &str, headed: bool, executable_path: Option<&str>) -> Result<DaemonResult, String> {
     if is_daemon_running(session) && daemon_ready(session) {
-        return Ok(());
+        return Ok(DaemonResult { already_running: true });
     }
 
     let exe_path = env::current_exe().map_err(|e| e.to_string())?;
@@ -184,6 +190,10 @@ pub fn ensure_daemon(session: &str, headed: bool) -> Result<(), String> {
 
         if headed {
             cmd.env("AGENT_BROWSER_HEADED", "1");
+        }
+
+        if let Some(path) = executable_path {
+            cmd.env("AGENT_BROWSER_EXECUTABLE_PATH", path);
         }
 
         // Create new process group and session to fully detach
@@ -220,6 +230,10 @@ pub fn ensure_daemon(session: &str, headed: bool) -> Result<(), String> {
             cmd.env("AGENT_BROWSER_HEADED", "1");
         }
 
+        if let Some(path) = executable_path {
+            cmd.env("AGENT_BROWSER_EXECUTABLE_PATH", path);
+        }
+
         // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const DETACHED_PROCESS: u32 = 0x00000008;
@@ -234,7 +248,7 @@ pub fn ensure_daemon(session: &str, headed: bool) -> Result<(), String> {
 
     for _ in 0..50 {
         if daemon_ready(session) {
-            return Ok(());
+            return Ok(DaemonResult { already_running: false });
         }
         thread::sleep(Duration::from_millis(100));
     }
