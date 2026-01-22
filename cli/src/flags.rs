@@ -10,6 +10,7 @@ pub struct Flags {
     pub executable_path: Option<String>,
     pub cdp: Option<String>,
     pub extensions: Vec<String>,
+    pub profile: Option<String>,
     pub proxy: Option<String>,
     pub proxy_bypass: Option<String>,
     pub args: Option<String>,
@@ -33,6 +34,7 @@ pub fn parse_flags(args: &[String]) -> Flags {
         executable_path: env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok(),
         cdp: None,
         extensions: extensions_env,
+        profile: env::var("AGENT_BROWSER_PROFILE").ok(),
         proxy: env::var("AGENT_BROWSER_PROXY").ok(),
         proxy_bypass: env::var("AGENT_BROWSER_PROXY_BYPASS").ok(),
         args: env::var("AGENT_BROWSER_ARGS").ok(),
@@ -74,6 +76,12 @@ pub fn parse_flags(args: &[String]) -> Flags {
             "--cdp" => {
                 if let Some(s) = args.get(i + 1) {
                     flags.cdp = Some(s.clone());
+                    i += 1;
+                }
+            }
+            "--profile" => {
+                if let Some(s) = args.get(i + 1) {
+                    flags.profile = Some(s.clone());
                     i += 1;
                 }
             }
@@ -127,6 +135,7 @@ pub fn clean_args(args: &[String]) -> Vec<String> {
         "--executable-path",
         "--cdp",
         "--extension",
+        "--profile",
         "--proxy",
         "--proxy-bypass",
         "--args",

@@ -818,9 +818,14 @@ export class BrowserManager {
     // Determine CDP endpoint: prefer cdpUrl over cdpPort for flexibility
     const cdpEndpoint = options.cdpUrl ?? (options.cdpPort ? String(options.cdpPort) : undefined);
     const hasExtensions = !!options.extensions?.length;
+    const hasProfile = !!options.profile;
 
     if (hasExtensions && cdpEndpoint) {
       throw new Error('Extensions cannot be used with CDP connection');
+    }
+
+    if (hasProfile && cdpEndpoint) {
+      throw new Error('Profile cannot be used with CDP connection');
     }
 
     if (this.isLaunched()) {
@@ -863,6 +868,7 @@ export class BrowserManager {
 
     let context: BrowserContext;
     if (hasExtensions) {
+      // Extensions require persistent context in a temp directory
       const extPaths = options.extensions!.join(',');
       const session = process.env.AGENT_BROWSER_SESSION || 'default';
       // Combine extension args with custom args
@@ -881,7 +887,19 @@ export class BrowserManager {
         }
       );
       this.isPersistentContext = true;
+    } else if (hasProfile) {
+      // Profile uses persistent context for durable cookies/storage
+      // Expand ~ to home directory since it won't be shell-expanded
+      const profilePath = options.profile!.replace(/^~\//, os.homedir() + '/');
+      context = await launcher.launchPersistentContext(profilePath, {
+        headless: options.headless ?? true,
+        executablePath: options.executablePath,
+        viewport,
+        extraHTTPHeaders: options.headers,
+      });
+      this.isPersistentContext = true;
     } else {
+      // Regular ephemeral browser
       this.browser = await launcher.launch({
         headless: options.headless ?? true,
         executablePath: options.executablePath,

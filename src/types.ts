@@ -17,6 +17,7 @@ export interface LaunchCommand extends BaseCommand {
   cdpPort?: number;
   cdpUrl?: string;
   extensions?: string[];
+  profile?: string; // Path to persistent browser profile directory
   proxy?: {
     server: string;
     bypass?: string;

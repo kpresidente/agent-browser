@@ -217,6 +217,7 @@ fn main() {
         let ignored_flags: Vec<&str> = [
             flags.executable_path.as_ref().map(|_| "--executable-path"),
             if has_extensions { Some("--extension") } else { None },
+            flags.profile.as_ref().map(|_| "--profile"),
             flags.args.as_ref().map(|_| "--args"),
             flags.user_agent.as_ref().map(|_| "--user-agent"),
             flags.proxy.as_ref().map(|_| "--proxy"),
@@ -358,8 +359,8 @@ fn main() {
         }
     }
 
-    // Launch headed browser or proxy if flags are set (without CDP or provider)
-    if (flags.headed || flags.proxy.is_some() || flags.args.is_some() || flags.user_agent.is_some()) && flags.cdp.is_none() && flags.provider.is_none() {
+    // Launch headed browser or configure browser options (without CDP or provider)
+    if (flags.headed || flags.profile.is_some() || flags.proxy.is_some() || flags.args.is_some() || flags.user_agent.is_some()) && flags.cdp.is_none() && flags.provider.is_none() {
         let mut launch_cmd = json!({
             "id": gen_id(),
             "action": "launch",
@@ -368,6 +369,11 @@ fn main() {
 
         let cmd_obj = launch_cmd.as_object_mut()
             .expect("json! macro guarantees object type");
+
+        // Add profile path if specified
+        if let Some(ref profile_path) = flags.profile {
+            cmd_obj.insert("profile".to_string(), json!(profile_path));
+        }
 
         if let Some(ref proxy_str) = flags.proxy {
             let mut proxy_obj = parse_proxy(proxy_str);

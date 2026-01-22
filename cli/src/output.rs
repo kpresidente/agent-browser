@@ -1412,6 +1412,7 @@ Snapshot Options:
 
 Options:
   --session <name>           Isolated session (or AGENT_BROWSER_SESSION env)
+  --profile <path>           Persistent browser profile (or AGENT_BROWSER_PROFILE env)
   --headers <json>           HTTP headers scoped to URL's origin (for auth)
   --executable-path <path>   Custom browser executable (or AGENT_BROWSER_EXECUTABLE_PATH)
   --extension <path>         Load browser extensions (repeatable)
@@ -1443,6 +1444,7 @@ Examples:
   agent-browser get text @e1
   agent-browser screenshot --full
   agent-browser --cdp 9222 snapshot      # Connect via CDP port
+  agent-browser --profile ~/.myapp open example.com  # Persistent profile
 "#
     );
 }

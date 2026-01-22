@@ -1114,6 +1114,7 @@ mod tests {
             executable_path: None,
             extensions: Vec::new(),
             cdp: None,
+            profile: None,
             proxy: None,
             proxy_bypass: None,
             args: None,
