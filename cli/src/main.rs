@@ -177,6 +177,7 @@ fn main() {
                     ParseError::UnknownCommand { .. } => "unknown_command",
                     ParseError::UnknownSubcommand { .. } => "unknown_subcommand",
                     ParseError::MissingArguments { .. } => "missing_arguments",
+                    ParseError::InvalidValue { .. } => "invalid_value",
                 };
                 println!(
                     r#"{{"success":false,"error":"{}","type":"{}"}}"#,
