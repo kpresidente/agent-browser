@@ -1029,6 +1029,7 @@ export class BrowserManager {
       this.cdpEndpoint = cdpEndpoint;
 
       for (const context of contexts) {
+        context.setDefaultTimeout(10000);
         this.contexts.push(context);
         this.setupContextTracking(context);
       }

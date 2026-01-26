@@ -177,6 +177,14 @@ export function toAIFriendlyError(error: unknown, selector: string): Error {
     );
   }
 
+  // Handle general timeout (element exists but action couldn't complete)
+  if (message.includes('Timeout') && message.includes('exceeded')) {
+    return new Error(
+      `Action on "${selector}" timed out. The element may be blocked, still loading, or not interactable. ` +
+        `Run 'snapshot' to check the current page state.`
+    );
+  }
+
   // Handle element not found (timeout waiting for element)
   if (
     message.includes('waiting for') &&
