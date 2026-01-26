@@ -1,10 +1,24 @@
 # agent-browser
 
-## 0.8.0
+## v0.8.0
 
-### Minor Changes
+### New Features
 
-- e059730: Added Kernel cloud browser provider integration with support for stealth mode and persistent profiles. Added --ignore-https-errors flag for working with self-signed certificates. Enhanced cookies set command with additional options for domain, path, httpOnly, secure, sameSite, and expires parameters.
+- **Kernel cloud browser provider** - Connect to Kernel (https://kernel.sh) for remote browser infrastructure via `-p kernel` flag or `AGENT_BROWSER_PROVIDER=kernel`. Supports stealth mode, persistent profiles, and automatic profile find-or-create.
+- **Ignore HTTPS certificate errors** - New `--ignore-https-errors` flag for working with self-signed certificates and development environments
+- **Enhanced cookie management** - Extended `cookies set` command with `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, and `--expires` flags for setting cookies before page load
+
+### Bug Fixes
+
+- Fixed tab list command not recognizing new pages opened via clicks or `target="_blank"` links (#275)
+- Fixed `check` command hanging indefinitely (#272)
+- Fixed `set device` not applying deviceScaleFactor - HiDPI screenshots now work correctly (#270)
+- Fixed state load and profile persistence not working in v0.7.6 (#268)
+- Screenshots now save to temp directory when no path is provided (#247)
+
+### Security
+
+- Daemon and stream server now reject cross-origin connections (#274)
 
 ## 0.7.6
 
