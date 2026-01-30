@@ -138,6 +138,10 @@ function buildSelector(role: string, name?: string): string {
 
 /**
  * Get enhanced snapshot with refs and optional filtering
+ *
+ * PATCHED: Uses Playwright's internal _snapshotForAI() method when available,
+ * which captures portal-rendered content (dropdowns, modals, toasts) that
+ * the standard ariaSnapshot() method misses.
  */
 export async function getEnhancedSnapshot(
   page: Page,
@@ -147,8 +151,33 @@ export async function getEnhancedSnapshot(
   const refs: RefMap = {};
 
   // Get ARIA snapshot from Playwright
-  const locator = options.selector ? page.locator(options.selector) : page.locator(':root');
-  const ariaTree = await locator.ariaSnapshot();
+  // PATCHED: Try _snapshotForAI first (captures portals), fall back to ariaSnapshot
+  let ariaTree: string | undefined;
+  let usePlaywrightRefs = false;
+
+  if (options.selector) {
+    // Selector-specific: use standard method
+    const locator = page.locator(options.selector);
+    ariaTree = await locator.ariaSnapshot();
+  } else {
+    // Full page: try _snapshotForAI for portal support
+    try {
+      // @ts-expect-error - _snapshotForAI is an internal Playwright method
+      if (typeof page._snapshotForAI === 'function') {
+        // @ts-expect-error - _snapshotForAI is an internal Playwright method
+        const result = await page._snapshotForAI();
+        ariaTree = result.full;
+        usePlaywrightRefs = true; // Tree already has refs from Playwright
+      } else {
+        const locator = page.locator(':root');
+        ariaTree = await locator.ariaSnapshot();
+      }
+    } catch {
+      // Fallback to standard method
+      const locator = page.locator(':root');
+      ariaTree = await locator.ariaSnapshot();
+    }
+  }
 
   if (!ariaTree) {
     return {
@@ -157,7 +186,31 @@ export async function getEnhancedSnapshot(
     };
   }
 
-  // Parse and enhance the ARIA tree
+  // If using Playwright's refs (from _snapshotForAI), extract them and return directly
+  if (usePlaywrightRefs) {
+    // Extract refs from the tree - format: [ref=e123]
+    const roleNameRegex = /^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?/;
+    const lines = ariaTree.split('\n');
+    for (const line of lines) {
+      const refMatch = line.match(/\[ref=([a-zA-Z0-9]+)\]/);
+      const roleMatch = line.match(roleNameRegex);
+      if (refMatch && roleMatch) {
+        const ref = refMatch[1];
+        const role = roleMatch[2]?.toLowerCase();
+        const name = roleMatch[3];
+        if (role && INTERACTIVE_ROLES.has(role)) {
+          refs[ref] = {
+            selector: buildSelector(role, name),
+            role: role,
+            name: name,
+          };
+        }
+      }
+    }
+    return { tree: ariaTree, refs };
+  }
+
+  // Parse and enhance the ARIA tree (original behavior)
   const enhancedTree = processAriaTree(ariaTree, refs, options);
 
   return { tree: enhancedTree, refs };
