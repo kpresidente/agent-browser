@@ -154,10 +154,15 @@ fn is_daemon_running(session: &str) -> bool {
     if !pid_path.exists() {
         return false;
     }
-    let port = get_port_for_session(session);
+    // Read actual port from port file (may differ from hashed port if there was a conflict)
+    let port = if let Ok(port_str) = fs::read_to_string(get_port_path(session)) {
+        port_str.trim().parse().unwrap_or_else(|_| get_port_for_session(session))
+    } else {
+        get_port_for_session(session)
+    };
     TcpStream::connect_timeout(
         &format!("127.0.0.1:{}", port).parse().unwrap(),
-        Duration::from_millis(100),
+        Duration::from_millis(200),
     )
     .is_ok()
 }
@@ -170,10 +175,16 @@ fn daemon_ready(session: &str) -> bool {
     }
     #[cfg(windows)]
     {
-        let port = get_port_for_session(session);
+        // Read actual port from port file (may differ from hashed port if there was a conflict)
+        let port = if let Ok(port_str) = fs::read_to_string(get_port_path(session)) {
+            port_str.trim().parse().unwrap_or_else(|_| get_port_for_session(session))
+        } else {
+            get_port_for_session(session)
+        };
+        // Use 200ms timeout - 50ms was too aggressive on Windows under load
         TcpStream::connect_timeout(
             &format!("127.0.0.1:{}", port).parse().unwrap(),
-            Duration::from_millis(50),
+            Duration::from_millis(200),
         )
         .is_ok()
     }
@@ -385,7 +396,12 @@ fn connect(session: &str) -> Result<Connection, String> {
     }
     #[cfg(windows)]
     {
-        let port = get_port_for_session(session);
+        // Read actual port from port file (may differ from hashed port if there was a conflict)
+        let port = if let Ok(port_str) = fs::read_to_string(get_port_path(session)) {
+            port_str.trim().parse().unwrap_or_else(|_| get_port_for_session(session))
+        } else {
+            get_port_for_session(session)
+        };
         TcpStream::connect(format!("127.0.0.1:{}", port))
             .map(Connection::Tcp)
             .map_err(|e| format!("Failed to connect: {}", e))

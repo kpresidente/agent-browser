@@ -8,6 +8,45 @@ import { executeCommand } from './actions.js';
 import { StreamServer } from './stream-server.js';
 // Platform detection
 const isWindows = process.platform === 'win32';
+// =============================================================================
+// LOGGING - Write to file since stdout/stderr are redirected to null
+// =============================================================================
+let logStream = null;
+function initLogging() {
+    const logDir = getSocketDir();
+    try {
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+        const logFile = path.join(logDir, 'daemon.log');
+        // Rotate log if over 1MB
+        if (fs.existsSync(logFile)) {
+            const stats = fs.statSync(logFile);
+            if (stats.size > 1024 * 1024) {
+                const oldLog = path.join(logDir, 'daemon.old.log');
+                if (fs.existsSync(oldLog))
+                    fs.unlinkSync(oldLog);
+                fs.renameSync(logFile, oldLog);
+            }
+        }
+        logStream = fs.createWriteStream(logFile, { flags: 'a' });
+    }
+    catch {
+        // Can't log, continue without
+    }
+}
+function log(level, ...args) {
+    const timestamp = new Date().toISOString();
+    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const line = `[${timestamp}] [${level}] ${message}\n`;
+    if (logStream) {
+        logStream.write(line);
+    }
+    // Also write to stderr for non-detached mode debugging
+    if (level === 'ERROR') {
+        process.stderr.write(line);
+    }
+}
 // Session support - each session gets its own socket/pid
 let currentSession = process.env.AGENT_BROWSER_SESSION || 'default';
 // Stream server for browser preview
@@ -155,30 +194,52 @@ export function getStreamPortFile(session) {
  * @param options.streamPort Port for WebSocket stream server (0 to disable)
  */
 export async function startDaemon(options) {
+    // Initialize logging first
+    initLogging();
+    log('INFO', '=== Daemon starting ===');
+    log('INFO', 'Session:', currentSession);
+    log('INFO', 'Platform:', process.platform);
+    log('INFO', 'Node version:', process.version);
+    log('INFO', 'PID:', process.pid);
     // Ensure socket directory exists
     const socketDir = getSocketDir();
+    log('INFO', 'Socket directory:', socketDir);
     if (!fs.existsSync(socketDir)) {
+        log('INFO', 'Creating socket directory...');
         fs.mkdirSync(socketDir, { recursive: true });
     }
     // Clean up any stale socket
+    log('INFO', 'Cleaning up stale sockets...');
     cleanupSocket();
+    log('INFO', 'Creating browser manager...');
     const browser = new BrowserManager();
     let shuttingDown = false;
+    log('INFO', 'Browser manager created');
     // Start stream server if port is specified (or use default if env var is set)
     const streamPort = options?.streamPort ??
         (process.env.AGENT_BROWSER_STREAM_PORT
             ? parseInt(process.env.AGENT_BROWSER_STREAM_PORT, 10)
             : 0);
     if (streamPort > 0) {
-        streamServer = new StreamServer(browser, streamPort);
-        await streamServer.start();
-        // Write stream port to file for clients to discover
-        const streamPortFile = getStreamPortFile();
-        fs.writeFileSync(streamPortFile, streamPort.toString());
+        log('INFO', `Starting stream server on port ${streamPort}...`);
+        try {
+            streamServer = new StreamServer(browser, streamPort);
+            await streamServer.start();
+            // Write stream port to file for clients to discover
+            const streamPortFile = getStreamPortFile();
+            fs.writeFileSync(streamPortFile, streamPort.toString());
+            log('INFO', 'Stream server started successfully');
+        }
+        catch (err) {
+            log('ERROR', 'Failed to start stream server:', err);
+            // Continue without stream server
+        }
     }
     const server = net.createServer((socket) => {
         let buffer = '';
         let httpChecked = false;
+        const clientId = Math.random().toString(36).substring(7);
+        log('INFO', `Client connected: ${clientId}`);
         socket.on('data', async (data) => {
             buffer += data.toString();
             // Security: Detect and reject HTTP requests to prevent cross-origin attacks.
@@ -210,6 +271,7 @@ export async function startDaemon(options) {
                     if (!browser.isLaunched() &&
                         parseResult.command.action !== 'launch' &&
                         parseResult.command.action !== 'close') {
+                        log('INFO', 'Auto-launching browser...');
                         const extensions = process.env.AGENT_BROWSER_EXTENSIONS
                             ? process.env.AGENT_BROWSER_EXTENSIONS.split(',')
                                 .map((p) => p.trim())
@@ -233,19 +295,26 @@ export async function startDaemon(options) {
                             }
                             : undefined;
                         const ignoreHTTPSErrors = process.env.AGENT_BROWSER_IGNORE_HTTPS_ERRORS === '1';
-                        await browser.launch({
-                            id: 'auto',
-                            action: 'launch',
-                            headless: process.env.AGENT_BROWSER_HEADED !== '1',
-                            executablePath: process.env.AGENT_BROWSER_EXECUTABLE_PATH,
-                            extensions: extensions,
-                            profile: process.env.AGENT_BROWSER_PROFILE,
-                            storageState: process.env.AGENT_BROWSER_STATE,
-                            args,
-                            userAgent: process.env.AGENT_BROWSER_USER_AGENT,
-                            proxy,
-                            ignoreHTTPSErrors: ignoreHTTPSErrors,
-                        });
+                        try {
+                            await browser.launch({
+                                id: 'auto',
+                                action: 'launch',
+                                headless: process.env.AGENT_BROWSER_HEADED !== '1',
+                                executablePath: process.env.AGENT_BROWSER_EXECUTABLE_PATH,
+                                extensions: extensions,
+                                profile: process.env.AGENT_BROWSER_PROFILE,
+                                storageState: process.env.AGENT_BROWSER_STATE,
+                                args,
+                                userAgent: process.env.AGENT_BROWSER_USER_AGENT,
+                                proxy,
+                                ignoreHTTPSErrors: ignoreHTTPSErrors,
+                            });
+                            log('INFO', 'Browser auto-launched successfully');
+                        }
+                        catch (err) {
+                            log('ERROR', 'Browser auto-launch failed:', err);
+                            throw err;
+                        }
                     }
                     // Handle close command specially
                     if (parseResult.command.action === 'close') {
@@ -275,26 +344,59 @@ export async function startDaemon(options) {
         });
     });
     const pidFile = getPidFile();
-    // Write PID file before listening
-    fs.writeFileSync(pidFile, process.pid.toString());
-    if (isWindows) {
-        // Windows: use TCP socket on localhost
-        const port = getPortForSession(currentSession);
-        const portFile = getPortFile();
-        fs.writeFileSync(portFile, port.toString());
-        server.listen(port, '127.0.0.1', () => {
-            // Daemon is ready on TCP port
-        });
-    }
-    else {
-        // Unix: use Unix domain socket
-        const socketPath = getSocketPath();
-        server.listen(socketPath, () => {
-            // Daemon is ready
-        });
-    }
+    // Bind to socket/port FIRST, then write PID file (fixes race condition)
+    await new Promise((resolve, reject) => {
+        if (isWindows) {
+            // Windows: use TCP socket on localhost
+            const basePort = getPortForSession(currentSession);
+            const portFile = getPortFile();
+            // Try up to 5 ports if the primary one is in use
+            const tryPort = (port, attempt) => {
+                log('INFO', `Attempting to bind to port ${port} (attempt ${attempt + 1}/5)...`);
+                server.once('error', (err) => {
+                    if (err.code === 'EADDRINUSE' && attempt < 4) {
+                        log('WARN', `Port ${port} in use, trying next port...`);
+                        tryPort(port + 1, attempt + 1);
+                    }
+                    else {
+                        log('ERROR', 'Server bind error:', err.message);
+                        cleanupSocket();
+                        reject(err);
+                    }
+                });
+                server.listen(port, '127.0.0.1', () => {
+                    const actualPort = server.address().port;
+                    log('INFO', `Daemon listening on TCP port ${actualPort}`);
+                    fs.writeFileSync(portFile, actualPort.toString());
+                    // Write PID file AFTER successful bind
+                    fs.writeFileSync(pidFile, process.pid.toString());
+                    log('INFO', 'PID file written:', pidFile);
+                    resolve();
+                });
+            };
+            tryPort(basePort, 0);
+        }
+        else {
+            // Unix: use Unix domain socket
+            const socketPath = getSocketPath();
+            log('INFO', `Attempting to bind to socket ${socketPath}...`);
+            server.once('error', (err) => {
+                log('ERROR', 'Server bind error:', err.message);
+                cleanupSocket();
+                reject(err);
+            });
+            server.listen(socketPath, () => {
+                log('INFO', `Daemon listening on Unix socket ${socketPath}`);
+                // Write PID file AFTER successful bind
+                fs.writeFileSync(pidFile, process.pid.toString());
+                log('INFO', 'PID file written:', pidFile);
+                resolve();
+            });
+        }
+    });
+    // Add general error handler for runtime errors (after initial bind)
     server.on('error', (err) => {
-        console.error('Server error:', err);
+        log('ERROR', 'Server runtime error:', err);
         cleanupSocket();
         process.exit(1);
     });
