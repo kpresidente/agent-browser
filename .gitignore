@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
 
-# Build output
-dist/
+# Build output (included for direct GitHub install)
+# dist/
 
 # Native binaries (keep the launcher scripts)
 bin/agent-browser-*
