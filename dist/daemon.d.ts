@@ -29,6 +29,11 @@ export declare function getPidFile(session?: string): string;
  */
 export declare function isDaemonRunning(session?: string): boolean;
 /**
+ * Kill any existing daemon for the current session
+ * Returns true if a daemon was killed, false if none was running
+ */
+export declare function killExistingDaemon(session?: string): boolean;
+/**
  * Get connection info for the current session
  * Returns { type: 'unix', path: string } or { type: 'tcp', port: number }
  */

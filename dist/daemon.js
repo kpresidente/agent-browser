@@ -146,6 +146,62 @@ export function isDaemonRunning(session) {
     }
 }
 /**
+ * Kill any existing daemon for the current session
+ * Returns true if a daemon was killed, false if none was running
+ */
+export function killExistingDaemon(session) {
+    const pidFile = getPidFile(session);
+    if (!fs.existsSync(pidFile))
+        return false;
+    try {
+        const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+        log('INFO', `Found existing daemon with PID ${pid}, killing...`);
+        // Try graceful kill first (SIGTERM), then force (SIGKILL)
+        try {
+            process.kill(pid, 'SIGTERM');
+        }
+        catch {
+            // Process might already be dead
+        }
+        // Wait a bit for graceful shutdown
+        const startWait = Date.now();
+        const maxWait = 3000; // 3 seconds
+        while (Date.now() - startWait < maxWait) {
+            try {
+                process.kill(pid, 0); // Check if still running
+                // Still running, wait more
+                const waitSync = (ms) => {
+                    const end = Date.now() + ms;
+                    while (Date.now() < end) { /* busy wait */ }
+                };
+                waitSync(100);
+            }
+            catch {
+                // Process is gone
+                break;
+            }
+        }
+        // Force kill if still running
+        try {
+            process.kill(pid, 0);
+            log('WARN', `Daemon ${pid} still running after SIGTERM, forcing kill...`);
+            process.kill(pid, 'SIGKILL');
+        }
+        catch {
+            // Process is gone
+        }
+        // Clean up files
+        cleanupSocket(session);
+        log('INFO', `Killed existing daemon (PID ${pid})`);
+        return true;
+    }
+    catch {
+        // No daemon running or couldn't kill
+        cleanupSocket(session);
+        return false;
+    }
+}
+/**
  * Get connection info for the current session
  * Returns { type: 'unix', path: string } or { type: 'tcp', port: number }
  */
@@ -208,7 +264,15 @@ export async function startDaemon(options) {
         log('INFO', 'Creating socket directory...');
         fs.mkdirSync(socketDir, { recursive: true });
     }
-    // Clean up any stale socket
+    // SINGLETON ENFORCEMENT: Kill any existing daemon before starting
+    // This prevents multiple daemons fighting for ports
+    log('INFO', 'Checking for existing daemon...');
+    if (killExistingDaemon()) {
+        // Give the OS time to release the port after killing the process
+        log('INFO', 'Waiting for port release after killing old daemon...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    // Clean up any stale socket files
     log('INFO', 'Cleaning up stale sockets...');
     cleanupSocket();
     log('INFO', 'Creating browser manager...');
