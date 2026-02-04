@@ -12,6 +12,59 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
+/// Strip the \\?\ extended path prefix that Windows canonicalize() adds
+/// Node.js cannot handle these paths
+#[cfg(windows)]
+fn strip_windows_prefix(path: &PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.clone()
+    }
+}
+
+/// Find Node.js executable, checking PATH first then common Windows locations
+#[cfg(windows)]
+fn find_node_executable() -> PathBuf {
+    // First, try PATH (handles node.exe, node.cmd from nvm, scoop, etc.)
+    if let Ok(node_path) = which::which("node") {
+        return node_path;
+    }
+
+    // Try common Windows installation paths
+    let common_paths = [
+        r"C:\Program Files\nodejs\node.exe",
+        r"C:\Program Files (x86)\nodejs\node.exe",
+    ];
+
+    for path in common_paths {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    // Check NVM for Windows default location
+    if let Ok(appdata) = env::var("APPDATA") {
+        let nvm_dir = PathBuf::from(appdata).join("nvm");
+        if nvm_dir.exists() {
+            // Find any installed version
+            if let Ok(entries) = fs::read_dir(&nvm_dir) {
+                for entry in entries.flatten() {
+                    let node_exe = entry.path().join("node.exe");
+                    if node_exe.exists() {
+                        return node_exe;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to just "node" and let it fail with a clear error
+    PathBuf::from("node")
+}
+
 #[derive(Serialize)]
 #[allow(dead_code)]
 pub struct Request {
@@ -224,7 +277,10 @@ pub fn ensure_daemon(
 
     let exe_path = env::current_exe().map_err(|e| e.to_string())?;
     // Canonicalize to resolve symlinks (e.g., npm global bin symlink -> actual binary)
-    let exe_path = exe_path.canonicalize().unwrap_or(exe_path);
+    let exe_path = exe_path.canonicalize().unwrap_or(exe_path.clone());
+    // On Windows, canonicalize returns \\?\ extended path prefix which Node.js can't handle
+    #[cfg(windows)]
+    let exe_path = strip_windows_prefix(&exe_path);
     let exe_dir = exe_path.parent().unwrap();
 
     let mut daemon_paths = vec![
@@ -243,7 +299,12 @@ pub fn ensure_daemon(
     let daemon_path = daemon_paths
         .iter()
         .find(|p| p.exists())
-        .ok_or("Daemon not found. Set AGENT_BROWSER_HOME environment variable or run from project directory.")?;
+        .ok_or_else(|| {
+            format!(
+                "Daemon not found. Searched paths:\n{}\nSet AGENT_BROWSER_HOME environment variable or run from project directory.",
+                daemon_paths.iter().map(|p| format!("  - {}", p.display())).collect::<Vec<_>>().join("\n")
+            )
+        })?;
 
     // Spawn daemon as a fully detached background process
     #[cfg(unix)]
@@ -315,9 +376,16 @@ pub fn ensure_daemon(
     {
         use std::os::windows::process::CommandExt;
 
-        // On Windows, call node directly. Command::new handles PATH resolution (node.exe or node.cmd)
-        // and automatically quotes arguments containing spaces.
-        let mut cmd = Command::new("node");
+        // Find Node.js - try PATH first, then common Windows locations
+        let node_cmd = find_node_executable();
+
+        // Capture stderr to a temp file for debugging spawn failures
+        let stderr_file = socket_dir.join("daemon_spawn.log");
+        let stderr_handle = fs::File::create(&stderr_file)
+            .map(Stdio::from)
+            .unwrap_or_else(|_| Stdio::null());
+
+        let mut cmd = Command::new(&node_cmd);
         cmd.arg(daemon_path)
             .env("AGENT_BROWSER_DAEMON", "1")
             .env("AGENT_BROWSER_SESSION", session);
@@ -369,21 +437,54 @@ pub fn ensure_daemon(
         cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr_handle)
             .spawn()
-            .map_err(|e| format!("Failed to start daemon: {}", e))?;
+            .map_err(|e| {
+                // Include stderr file path in error if spawn fails
+                format!(
+                    "Failed to start daemon: {}. Node executable: {}",
+                    e,
+                    node_cmd.display()
+                )
+            })?;
     }
 
-    for _ in 0..50 {
+    // Wait for daemon to become ready with exponential backoff
+    // Total wait: 100+200+400+800+1000+1000+1000+1000+1000+1000 = ~7.5s
+    let backoff_times = [100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000];
+    for wait_ms in backoff_times {
         if daemon_ready(session) {
             return Ok(DaemonResult {
                 already_running: false,
             });
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(wait_ms));
     }
 
-    Err("Daemon failed to start".to_string())
+    // Build helpful error message with log file location
+    let log_file = get_socket_dir().join("daemon.log");
+
+    // On Windows, check if spawn stderr log has useful info
+    #[cfg(windows)]
+    let spawn_error = {
+        let stderr_file = get_socket_dir().join("daemon_spawn.log");
+        fs::read_to_string(&stderr_file)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| format!("\nSpawn output: {}", s.trim()))
+            .unwrap_or_default()
+    };
+    #[cfg(not(windows))]
+    let spawn_error = String::new();
+
+    Err(format!(
+        "Daemon failed to start within timeout.{}\n\
+         Check the daemon log for details: {}\n\
+         You can also try starting the daemon manually:\n\
+         cd ~/tools/agent-browser && node dist/daemon.js",
+        spawn_error,
+        log_file.display()
+    ))
 }
 
 fn connect(session: &str) -> Result<Connection, String> {
