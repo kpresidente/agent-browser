@@ -17,7 +17,7 @@
  *   agent-browser click @e2             # Click element by ref
  */
 
-import type { Page, Locator } from 'playwright-core';
+import type { Page } from 'playwright-core';
 
 export interface RefMap {
   [ref: string]: {
@@ -136,6 +136,108 @@ function buildSelector(role: string, name?: string): string {
   return `getByRole('${role}')`;
 }
 
+const SNAPSHOT_FOCUS_GUARD_EVENTS = ['blur', 'focusout', 'focusin'] as const;
+
+/**
+ * Install temporary capture listeners that block focus-transition events.
+ *
+ * Some portal menus auto-dismiss on blur/focusout. _snapshotForAI can trigger
+ * those events before the accessibility tree is read, so we suppress them
+ * during snapshot capture and always clean up in finally.
+ */
+async function installSnapshotFocusGuard(page: Page): Promise<string | null> {
+  const guardKey = `__agentBrowserSnapshotGuard_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
+
+  try {
+    await page.evaluate(
+      ({ key, eventTypes }) => {
+        const globalObject = globalThis as Record<string, unknown>;
+        const win = globalThis as {
+          addEventListener?: (
+            type: string,
+            listener: (event: unknown) => void,
+            useCapture?: boolean
+          ) => void;
+          removeEventListener?: (
+            type: string,
+            listener: (event: unknown) => void,
+            useCapture?: boolean
+          ) => void;
+          document?: {
+            addEventListener?: (
+              type: string,
+              listener: (event: unknown) => void,
+              useCapture?: boolean
+            ) => void;
+            removeEventListener?: (
+              type: string,
+              listener: (event: unknown) => void,
+              useCapture?: boolean
+            ) => void;
+          };
+        };
+
+        const doc = win.document;
+        if (!doc || typeof win.addEventListener !== 'function') {
+          return;
+        }
+
+        const listeners: Array<{ target: 'window' | 'document'; type: string }> = [];
+        const handler = (event: unknown) => {
+          const focusEvent = event as { stopImmediatePropagation?: () => void };
+          focusEvent.stopImmediatePropagation?.();
+        };
+
+        for (const type of eventTypes) {
+          win.addEventListener?.(type, handler, true);
+          doc.addEventListener?.(type, handler, true);
+          listeners.push({ target: 'window', type });
+          listeners.push({ target: 'document', type });
+        }
+
+        globalObject[key] = () => {
+          for (const listener of listeners) {
+            if (listener.target === 'window') {
+              win.removeEventListener?.(listener.type, handler, true);
+            } else {
+              doc.removeEventListener?.(listener.type, handler, true);
+            }
+          }
+          delete globalObject[key];
+        };
+      },
+      { key: guardKey, eventTypes: SNAPSHOT_FOCUS_GUARD_EVENTS }
+    );
+
+    return guardKey;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove temporary focus guard installed by installSnapshotFocusGuard.
+ */
+async function removeSnapshotFocusGuard(page: Page, guardKey: string | null): Promise<void> {
+  if (!guardKey) {
+    return;
+  }
+
+  try {
+    await page.evaluate((key) => {
+      const globalObject = globalThis as Record<string, unknown>;
+      const cleanup = globalObject[key];
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
+    }, guardKey);
+  } catch {
+    // Best-effort cleanup; do not fail snapshot if page navigated/detached.
+  }
+}
+
 /**
  * Get enhanced snapshot with refs and optional filtering
  *
@@ -161,7 +263,10 @@ export async function getEnhancedSnapshot(
     ariaTree = await locator.ariaSnapshot();
   } else {
     // Full page: try _snapshotForAI for portal support
+    let focusGuardKey: string | null = null;
     try {
+      focusGuardKey = await installSnapshotFocusGuard(page);
+
       // @ts-expect-error - _snapshotForAI is an internal Playwright method
       if (typeof page._snapshotForAI === 'function') {
         // @ts-expect-error - _snapshotForAI is an internal Playwright method
@@ -176,6 +281,8 @@ export async function getEnhancedSnapshot(
       // Fallback to standard method
       const locator = page.locator(':root');
       ariaTree = await locator.ariaSnapshot();
+    } finally {
+      await removeSnapshotFocusGuard(page, focusGuardKey);
     }
   }
 
