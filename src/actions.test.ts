@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { toAIFriendlyError } from './actions.js';
+import { describe, it, expect, vi } from 'vitest';
+import { executeCommand, toAIFriendlyError } from './actions.js';
 
 describe('toAIFriendlyError', () => {
   describe('element blocked by overlay', () => {
@@ -35,5 +35,61 @@ describe('toAIFriendlyError', () => {
 
       expect(result.message).toContain('cookie banners');
     });
+  });
+});
+
+describe('executeCommand click focus guard lifecycle', () => {
+  it('arms focus guard before click', async () => {
+    const click = vi.fn().mockResolvedValue(undefined);
+    const getLocator = vi.fn().mockReturnValue({ click });
+    const armSnapshotFocusGuard = vi.fn().mockResolvedValue(undefined);
+    const clearSnapshotFocusGuard = vi.fn().mockResolvedValue(undefined);
+
+    const browser = {
+      getLocator,
+      armSnapshotFocusGuard,
+      clearSnapshotFocusGuard,
+    } as any;
+
+    const response = await executeCommand(
+      {
+        id: '1',
+        action: 'click',
+        selector: '@e1',
+      } as any,
+      browser
+    );
+
+    expect(response.success).toBe(true);
+    expect(armSnapshotFocusGuard).toHaveBeenCalledTimes(1);
+    expect(getLocator).toHaveBeenCalledWith('@e1');
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(clearSnapshotFocusGuard).not.toHaveBeenCalled();
+  });
+
+  it('clears focus guard when click fails', async () => {
+    const click = vi.fn().mockRejectedValue(new Error('click failed'));
+    const getLocator = vi.fn().mockReturnValue({ click });
+    const armSnapshotFocusGuard = vi.fn().mockResolvedValue(undefined);
+    const clearSnapshotFocusGuard = vi.fn().mockResolvedValue(undefined);
+
+    const browser = {
+      getLocator,
+      armSnapshotFocusGuard,
+      clearSnapshotFocusGuard,
+    } as any;
+
+    const response = await executeCommand(
+      {
+        id: '2',
+        action: 'click',
+        selector: '@e2',
+      } as any,
+      browser
+    );
+
+    expect(response.success).toBe(false);
+    expect(armSnapshotFocusGuard).toHaveBeenCalledTimes(1);
+    expect(clearSnapshotFocusGuard).toHaveBeenCalledTimes(1);
   });
 });

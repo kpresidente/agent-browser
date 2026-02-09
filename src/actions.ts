@@ -500,6 +500,8 @@ async function handleClick(command: ClickCommand, browser: BrowserManager): Prom
   // Support both refs (@e1) and regular selectors
   const locator = browser.getLocator(command.selector);
 
+  await browser.armSnapshotFocusGuard();
+
   try {
     await locator.click({
       button: command.button,
@@ -507,6 +509,7 @@ async function handleClick(command: ClickCommand, browser: BrowserManager): Prom
       delay: command.delay,
     });
   } catch (error) {
+    await browser.clearSnapshotFocusGuard();
     throw toAIFriendlyError(error, command.selector);
   }
 

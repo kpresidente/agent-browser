@@ -136,7 +136,7 @@ function buildSelector(role: string, name?: string): string {
   return `getByRole('${role}')`;
 }
 
-const SNAPSHOT_FOCUS_GUARD_EVENTS = ['blur', 'focusout', 'focusin'] as const;
+export const SNAPSHOT_FOCUS_GUARD_EVENTS = ['blur', 'focusout', 'focusin'] as const;
 
 /**
  * Install temporary capture listeners that block focus-transition events.
@@ -145,8 +145,11 @@ const SNAPSHOT_FOCUS_GUARD_EVENTS = ['blur', 'focusout', 'focusin'] as const;
  * those events before the accessibility tree is read, so we suppress them
  * during snapshot capture and always clean up in finally.
  */
-async function installSnapshotFocusGuard(page: Page): Promise<string | null> {
-  const guardKey = `__agentBrowserSnapshotGuard_${Date.now()}_${Math.random()
+export async function installSnapshotFocusGuard(
+  page: Page,
+  eventTypes: readonly string[] = SNAPSHOT_FOCUS_GUARD_EVENTS
+): Promise<string | null> {
+  const guardKey = `__agentBrowserFocusGuard_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
 
@@ -208,7 +211,7 @@ async function installSnapshotFocusGuard(page: Page): Promise<string | null> {
           delete globalObject[key];
         };
       },
-      { key: guardKey, eventTypes: SNAPSHOT_FOCUS_GUARD_EVENTS }
+      { key: guardKey, eventTypes }
     );
 
     return guardKey;
@@ -220,7 +223,10 @@ async function installSnapshotFocusGuard(page: Page): Promise<string | null> {
 /**
  * Remove temporary focus guard installed by installSnapshotFocusGuard.
  */
-async function removeSnapshotFocusGuard(page: Page, guardKey: string | null): Promise<void> {
+export async function removeSnapshotFocusGuard(
+  page: Page,
+  guardKey: string | null
+): Promise<void> {
   if (!guardKey) {
     return;
   }

@@ -18,7 +18,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { LaunchCommand } from './types.js';
-import { type RefMap, type EnhancedSnapshot, getEnhancedSnapshot, parseRef } from './snapshot.js';
+import {
+  type RefMap,
+  type EnhancedSnapshot,
+  getEnhancedSnapshot,
+  parseRef,
+  installSnapshotFocusGuard,
+  removeSnapshotFocusGuard,
+} from './snapshot.js';
 
 // Screencast frame data from CDP
 export interface ScreencastFrame {
@@ -63,6 +70,12 @@ interface PageError {
   timestamp: number;
 }
 
+interface PendingSnapshotFocusGuard {
+  page: Page;
+  key: string;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
 /**
  * Manages the Playwright browser lifecycle with multiple tabs/windows
  */
@@ -102,6 +115,8 @@ export class BrowserManager {
   private recordingPage: Page | null = null;
   private recordingOutputPath: string = '';
   private recordingTempDir: string = '';
+  private pendingSnapshotFocusGuard: PendingSnapshotFocusGuard | null = null;
+  private readonly snapshotFocusGuardTimeoutMs = 5000;
 
   /**
    * Check if browser is launched
@@ -120,10 +135,50 @@ export class BrowserManager {
     selector?: string;
   }): Promise<EnhancedSnapshot> {
     const page = this.getPage();
-    const snapshot = await getEnhancedSnapshot(page, options);
-    this.refMap = snapshot.refs;
-    this.lastSnapshot = snapshot.tree;
-    return snapshot;
+    try {
+      const snapshot = await getEnhancedSnapshot(page, options);
+      this.refMap = snapshot.refs;
+      this.lastSnapshot = snapshot.tree;
+      return snapshot;
+    } finally {
+      await this.clearSnapshotFocusGuard();
+    }
+  }
+
+  /**
+   * Arm a focus guard before click actions. This keeps transient portal menus open
+   * across the click -> snapshot IPC gap and auto-cleans after timeout if unused.
+   */
+  async armSnapshotFocusGuard(): Promise<void> {
+    const page = this.getPage();
+
+    // Replace any existing guard so it always follows the most recent click.
+    await this.clearSnapshotFocusGuard();
+
+    const key = await installSnapshotFocusGuard(page);
+    if (!key) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      void this.clearSnapshotFocusGuard().catch(() => {});
+    }, this.snapshotFocusGuardTimeoutMs);
+
+    this.pendingSnapshotFocusGuard = { page, key, timeout };
+  }
+
+  /**
+   * Remove pending click-installed focus guard, if present.
+   */
+  async clearSnapshotFocusGuard(): Promise<void> {
+    if (!this.pendingSnapshotFocusGuard) {
+      return;
+    }
+
+    const pending = this.pendingSnapshotFocusGuard;
+    this.pendingSnapshotFocusGuard = null;
+    clearTimeout(pending.timeout);
+    await removeSnapshotFocusGuard(pending.page, pending.key);
   }
 
   /**
@@ -1800,6 +1855,8 @@ export class BrowserManager {
    * Close the browser and clean up
    */
   async close(): Promise<void> {
+    await this.clearSnapshotFocusGuard();
+
     // Stop recording if active (saves video)
     if (this.recordingContext) {
       await this.stopRecording();
