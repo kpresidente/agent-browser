@@ -496,24 +496,39 @@ async function handleNavigate(
   });
 }
 
+/**
+ * Click with persistent focus guard to preserve transient menus between
+ * click and subsequent snapshot commands.
+ */
+async function clickWithFocusGuard(
+  browser: BrowserManager,
+  locator: ReturnType<Page['locator']>,
+  id: string,
+  options?: Parameters<ReturnType<Page['locator']>['click']>[0]
+): Promise<Response> {
+  await browser.armSnapshotFocusGuard();
+  try {
+    await locator.click(options);
+    return successResponse(id, { clicked: true });
+  } catch (error) {
+    await browser.clearSnapshotFocusGuard();
+    throw error;
+  }
+}
+
 async function handleClick(command: ClickCommand, browser: BrowserManager): Promise<Response> {
   // Support both refs (@e1) and regular selectors
   const locator = browser.getLocator(command.selector);
 
-  await browser.armSnapshotFocusGuard();
-
   try {
-    await locator.click({
+    return await clickWithFocusGuard(browser, locator, command.id, {
       button: command.button,
       clickCount: command.clickCount,
       delay: command.delay,
     });
   } catch (error) {
-    await browser.clearSnapshotFocusGuard();
     throw toAIFriendlyError(error, command.selector);
   }
-
-  return successResponse(command.id, { clicked: true });
 }
 
 async function handleType(command: TypeCommand, browser: BrowserManager): Promise<Response> {
@@ -842,9 +857,11 @@ async function handleDoubleClick(
   browser: BrowserManager
 ): Promise<Response> {
   const locator = browser.getLocator(command.selector);
+  await browser.armSnapshotFocusGuard();
   try {
     await locator.dblclick();
   } catch (error) {
+    await browser.clearSnapshotFocusGuard();
     throw toAIFriendlyError(error, command.selector);
   }
   return successResponse(command.id, { clicked: true });
@@ -892,8 +909,7 @@ async function handleGetByRole(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'fill':
       await locator.fill(command.value ?? '');
       return successResponse(command.id, { filled: true });
@@ -915,8 +931,7 @@ async function handleGetByText(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'hover':
       await locator.hover();
       return successResponse(command.id, { hovered: true });
@@ -932,8 +947,7 @@ async function handleGetByLabel(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'fill':
       await locator.fill(command.value ?? '');
       return successResponse(command.id, { filled: true });
@@ -952,8 +966,7 @@ async function handleGetByPlaceholder(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'fill':
       await locator.fill(command.value ?? '');
       return successResponse(command.id, { filled: true });
@@ -1665,8 +1678,7 @@ async function handleGetByAltText(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'hover':
       await locator.hover();
       return successResponse(command.id, { hovered: true });
@@ -1682,8 +1694,7 @@ async function handleGetByTitle(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'hover':
       await locator.hover();
       return successResponse(command.id, { hovered: true });
@@ -1699,8 +1710,7 @@ async function handleGetByTestId(
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'fill':
       await locator.fill(command.value ?? '');
       return successResponse(command.id, { filled: true });
@@ -1720,8 +1730,7 @@ async function handleNth(command: NthCommand, browser: BrowserManager): Promise<
 
   switch (command.subaction) {
     case 'click':
-      await locator.click();
-      return successResponse(command.id, { clicked: true });
+      return await clickWithFocusGuard(browser, locator, command.id);
     case 'fill':
       await locator.fill(command.value ?? '');
       return successResponse(command.id, { filled: true });
